@@ -314,3 +314,15 @@ if meson.version().version_compare('>=0.61')
   install_symlink('janet.h', pointing_to: 'janet_' + meson.project_version() + '.h', install_dir: join_paths(get_option('includedir'), 'janet'))
 endif
 
+# Install jpm from git
+if build_machine.system() == 'windows'
+  run_target('install_jpm_git',
+             command: ['powershell',
+                        join_paths(meson.current_source_dir(), 'tools/meson/install_jpm.ps1'),
+                        get_option('prefix')],
+             depends: [janet_mainclient])
+else
+  run_target('install_jpm_git',
+             command: ['tools/meson/install_jpm.sh', get_option('prefix')],
+             depends: [janet_mainclient])
+endif

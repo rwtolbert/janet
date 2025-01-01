@@ -14,6 +14,7 @@
 @if "%1"=="test" goto TEST
 @if "%1"=="dist" goto DIST
 @if "%1"=="install" goto INSTALL
+@if "%1"=="install_jpm_git" goto INSTALL_JPM_GIT
 @if "%1"=="all" goto ALL
 
 @rem Set compile and link options here
@@ -69,6 +70,9 @@ rc /nologo /fobuild\janet_win.res janet_win.rc
 @rem Build static library (libjanet.lib)
 %JANET_LINK_STATIC% /out:build\libjanet.lib build\janet.obj
 @if not errorlevel 0 goto :BUILDFAIL
+
+@rem Fetch and build jpm
+cmd /c ".\tools\meson\install_jpm.bat"
 
 echo === Successfully built janet.exe for Windows ===
 echo === Run 'build_win test' to run tests. ==
