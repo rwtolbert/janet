@@ -204,6 +204,16 @@
   [fmt & args]
   (error (string/format fmt ;args)))
 
+(defmacro assertf
+  "Convenience macro that combines `assert` and `string/format`."
+  [x fmt & args]
+  (def v (gensym))
+  ~(do
+     (def ,v ,x)
+     (if ,v
+       ,v
+       (,errorf ,fmt ,;args))))
+
 (defmacro default
   ``Define a default value for an optional argument.
   Expands to `(def sym (if (= nil sym) val sym))`.``
@@ -1301,7 +1311,7 @@
 (defdyn *redef* "When set, allow dynamically rebinding top level defs. Will slow generated code and is intended to be used for development.")
 (defdyn *debug* "Enables a built in debugger on errors and other useful features for debugging in a repl.")
 (defdyn *exit* "When set, will cause the current context to complete. Can be set to exit from repl (or file), for example.")
-(defdyn *exit-value* "Set the return value from `run-context` upon an exit. By default, `run-context` will return nil.")
+(defdyn *exit-value* "Set the return value from `run-context` upon an exit.")
 (defdyn *task-id* "When spawning a thread or fiber, the task-id can be assigned for concurrency control.")
 
 (defdyn *current-file*
@@ -1853,6 +1863,9 @@
 (defdyn *pretty-format*
   "Format specifier for the `pp` function")
 
+(defdyn *repl-prompt*
+  "Allow setting a custom prompt at the default REPL. Not all REPLs will respect this binding.")
+
 (defn pp
   ``Pretty-print to stdout or `(dyn *out*)`. The format string used is `(dyn *pretty-format* "%q")`.``
   [x]
@@ -2206,56 +2219,31 @@
   (map-template :some res pred ind inds)
   res)
 
-(defn deep-not=
-  ``Like `not=`, but mutable types (arrays, tables, buffers) are considered
-  equal if they have identical structure. Much slower than `not=`.``
-  [x y]
-  (def tx (type x))
-  (or
-    (not= tx (type y))
-    (case tx
-      :tuple (or (not= (length x) (length y))
-                 (do
-                   (var ret false)
-                   (forv i 0 (length x)
-                     (def xx (in x i))
-                     (def yy (in y i))
-                     (if (deep-not= xx yy)
-                       (break (set ret true))))
-                   ret))
-      :array (or (not= (length x) (length y))
-                 (do
-                   (var ret false)
-                   (forv i 0 (length x)
-                     (def xx (in x i))
-                     (def yy (in y i))
-                     (if (deep-not= xx yy)
-                       (break (set ret true))))
-                   ret))
-      :struct (deep-not= (kvs x) (kvs y))
-      :table (deep-not= (table/to-struct x) (table/to-struct y))
-      :buffer (not= (string x) (string y))
-      (not= x y))))
-
-(defn deep=
-  ``Like `=`, but mutable types (arrays, tables, buffers) are considered
-  equal if they have identical structure. Much slower than `=`.``
-  [x y]
-  (not (deep-not= x y)))
-
 (defn freeze
   `Freeze an object (make it immutable) and do a deep copy, making
   child values also immutable. Closures, fibers, and abstract types
   will not be recursively frozen, but all other types will.`
   [x]
-  (case (type x)
-    :array (tuple/slice (map freeze x))
-    :tuple (tuple/slice (map freeze x))
-    :table (if-let [p (table/getproto x)]
-             (freeze (merge (table/clone p) x))
-             (struct ;(map freeze (kvs x))))
-    :struct (struct ;(map freeze (kvs x)))
-    :buffer (string x)
+  (def tx (type x))
+  (cond
+    (or (= tx :array) (= tx :tuple))
+    (tuple/slice (map freeze x))
+
+    (or (= tx :table) (= tx :struct))
+    (let [temp-tab @{}]
+      # Handle multiple unique keys that freeze. Result should
+      # be independent of iteration order.
+      (eachp [k v] x
+        (def kk (freeze k))
+        (def vv (freeze v))
+        (def old (get temp-tab kk))
+        (def new (if (= nil old) vv (max vv old)))
+        (put temp-tab kk new))
+      (table/to-struct temp-tab (freeze (getproto x))))
+
+    (= tx :buffer)
+    (string x)
+
     x))
 
 (defn thaw
@@ -2270,6 +2258,41 @@
     :struct (walk-dict thaw (struct/proto-flatten ds))
     :string (buffer ds)
     ds))
+
+(defn deep-not=
+  ``Like `not=`, but mutable types (arrays, tables, buffers) are considered
+  equal if they have identical structure. Much slower than `not=`.``
+  [x y]
+  (def tx (type x))
+  (or
+    (not= tx (type y))
+    (cond
+      (or (= tx :tuple) (= tx :array))
+      (or (not= (length x) (length y))
+          (do
+            (var ret false)
+            (forv i 0 (length x)
+              (def xx (in x i))
+              (def yy (in y i))
+              (if (deep-not= xx yy)
+                (break (set ret true))))
+            ret))
+      (or (= tx :struct) (= tx :table))
+      (or (not= (length x) (length y))
+          (do
+            (def rawget (if (= tx :struct) struct/rawget table/rawget))
+            (var ret false)
+            (eachp [k v] x
+                (if (deep-not= (rawget y k) v) (break (set ret true))))
+            ret))
+      (= tx :buffer) (not= 0 (- (length x) (length y)) (memcmp x y))
+      (not= x y))))
+
+(defn deep=
+  ``Like `=`, but mutable types (arrays, tables, buffers) are considered
+  equal if they have identical structure. Much slower than `=`.``
+  [x y]
+  (not (deep-not= x y)))
 
 (defn macex
   ``Expand macros completely.
@@ -2652,7 +2675,6 @@
 
       (do
         (var pindex 0)
-        (var pstatus nil)
         (def len (length buf))
         (when (= len 0)
           (:eof p)
@@ -2825,6 +2847,24 @@
   (array/insert mp sys-index [(string ":sys:/:all:" ext) loader check-is-dep])
   (def curall-index (find-prefix ":cur:/:all:"))
   (array/insert mp curall-index [(string ":cur:/:all:" ext) loader check-relative])
+  mp)
+
+# Don't expose this externally yet - could break if custom module/paths is setup.
+(defn- module/add-syspath
+  ```
+  Add a custom syspath to `module/paths` by duplicating all entries that being with `:sys:` and
+  adding duplicates with a specific path prefix instead.
+  ```
+  [path]
+  (def copies @[])
+  (var last-index 0)
+  (def mp (dyn *module-paths* module/paths))
+  (eachp [index entry] mp
+    (def pattern (first entry))
+    (when (and (string? pattern) (string/has-prefix? ":sys:/" pattern))
+      (set last-index index)
+      (array/push copies [(string/replace ":sys:" path pattern) ;(drop 1 entry)])))
+  (array/insert mp (+ 1 last-index) ;copies)
   mp)
 
 (module/add-paths ":native:" :native)
@@ -3913,7 +3953,7 @@
     (defn make-sig []
       (ffi/signature :default real-ret-type ;computed-type-args))
     (defn make-ptr []
-      (assert (ffi/lookup (if lazy (llib) lib) raw-symbol) (string "failed to find ffi symbol " raw-symbol)))
+      (assertf (ffi/lookup (if lazy (llib) lib) raw-symbol) "failed to find ffi symbol %v" raw-symbol))
     (if lazy
       ~(defn ,alias ,;meta [,;formal-args]
          (,ffi/call (,(delay (make-ptr))) (,(delay (make-sig))) ,;formal-args))
@@ -4066,7 +4106,7 @@
             (when (empty? b) (buffer/trim b) (os/chmod to perm) (break))
             (file/write fto b)
             (buffer/clear b)))
-         (errorf "destination file %s cannot be opened for writing" to))
+        (errorf "destination file %s cannot be opened for writing" to))
       (errorf "source file %s cannot be opened for reading" from)))
 
   (defn- copyrf
@@ -4090,7 +4130,7 @@
     "Get the manifest for a give installed bundle"
     [bundle-name]
     (def name (get-manifest-filename bundle-name))
-    (assert (fexists name) (string "no bundle " bundle-name " found"))
+    (assertf (fexists name) "no bundle %v found" bundle-name)
     (parse (slurp name)))
 
   (defn- get-bundle-module
@@ -4233,11 +4273,9 @@
       (def missing (seq [d :in deps :when (not (bundle/installed? d))] (string d)))
       (when (next missing) (errorf "missing dependencies %s" (string/join missing ", "))))
     (def bundle-name (get config :name default-bundle-name))
-    (assert bundle-name (errorf "unable to infer bundle name for %v, use :name argument" path))
-    (assert (not (string/check-set "\\/" bundle-name))
-            (string "bundle name "
-                    bundle-name
-                    " cannot contain path separators"))
+    (assertf bundle-name "unable to infer bundle name for %v, use :name argument" path)
+    (assertf (not (string/check-set "\\/" bundle-name))
+             "bundle name %v cannot contain path separators" bundle-name)
     (assert (next bundle-name) "cannot use empty bundle-name")
     (assert (not (fexists (get-manifest-filename bundle-name)))
             "bundle is already installed")
@@ -4274,10 +4312,10 @@
         (do-hook module bundle-name :clean man))
       (do-hook module bundle-name :build man)
       (do-hook module bundle-name :install man)
-      (when check
-        (do-hook module bundle-name :check man))
       (if (empty? (get man :files)) (print "no files installed, is this a valid bundle?"))
-      (sync-manifest man))
+      (sync-manifest man)
+      (when check
+        (do-hook module bundle-name :check man)))
     (print "installed " bundle-name)
     bundle-name)
 
@@ -4289,7 +4327,7 @@
     (var i 0)
     (def man (bundle/manifest bundle-name))
     (def files (get man :files @[]))
-    (assert (os/mkdir dest-dir) (string "could not create directory " dest-dir " (or it already exists)"))
+    (assertf (os/mkdir dest-dir) "could not create directory %v (or it already exists)" dest-dir)
     (def s (sep))
     (os/mkdir (string dest-dir s "bundle"))
     (def install-hook (string dest-dir s "bundle" s "init.janet"))
@@ -4488,7 +4526,12 @@
   (var error-level nil)
   (var expect-image false)
 
-  (if-let [jp (getenv-alias "JANET_PATH")] (setdyn *syspath* jp))
+  (when-let [jp (getenv-alias "JANET_PATH")]
+    (def path-sep (if (index-of (os/which) [:windows :mingw]) ";" ":"))
+    (def paths (reverse! (string/split path-sep jp)))
+    (for i 1 (length paths)
+      (module/add-syspath (get paths i)))
+    (setdyn *syspath* (first paths)))
   (if-let [jprofile (getenv-alias "JANET_PROFILE")] (setdyn *profilepath* jprofile))
   (set colorize (and
                   (not (getenv-alias "NO_COLOR"))
@@ -4620,17 +4663,15 @@
         (if-not quiet
           (print "Janet " janet/version "-" janet/build " " (os/which) "/" (os/arch) "/" (os/compiler) " - '(doc)' for help"))
         (flush)
+        (def env (make-env))
         (defn getprompt [p]
+          (when-let [custom-prompt (get env *repl-prompt*)] (break (custom-prompt p)))
           (def [line] (parser/where p))
           (string "repl:" line ":" (parser/state p :delimiters) "> "))
         (defn getstdin [prompt buf _]
           (file/write stdout prompt)
           (file/flush stdout)
           (file/read stdin :line buf))
-        (def env (make-env))
-        (when-let [profile.janet (dyn *profilepath*)]
-          (def new-env (dofile profile.janet :exit true))
-          (merge-module env new-env "" false))
         (when debug-flag
           (put env *debug* true)
           (put env *redef* true))
@@ -4642,6 +4683,9 @@
         (setdyn *doc-color* (if colorize true))
         (setdyn *lint-error* error-level)
         (setdyn *lint-warn* error-level)
+        (when-let [profile.janet (dyn *profilepath*)]
+          (dofile profile.janet :exit true :env env)
+          (put env *current-file* nil))
         (repl getchunk nil env)))))
 
 ###

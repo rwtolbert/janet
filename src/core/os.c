@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2023 Calvin Rose and contributors.
+* Copyright (c) 2024 Calvin Rose and contributors.
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to
@@ -27,9 +27,10 @@
 #include "gc.h"
 #endif
 
+#include <stdlib.h>
+
 #ifndef JANET_REDUCED_OS
 
-#include <stdlib.h>
 #include <time.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -251,7 +252,7 @@ JANET_CORE_FN(os_exit,
     }
     janet_deinit();
     if (argc >= 2 && janet_truthy(argv[1])) {
-        _exit(status);
+        _Exit(status);
     } else {
         exit(status);
     }

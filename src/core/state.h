@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2023 Calvin Rose
+* Copyright (c) 2024 Calvin Rose
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to
@@ -100,6 +100,7 @@ struct JanetVM {
      * return point for panics. */
     jmp_buf *signal_buf;
     Janet *return_reg;
+    int coerce_error;
 
     /* The global registry for c functions. Used to store meta-data
      * along with otherwise bare c function pointers. */

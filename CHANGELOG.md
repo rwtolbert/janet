@@ -1,6 +1,26 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## ??? - Unreleased
+- Add `struct/rawget`
+- Fix `deep=` and `deep-not=` to better handle degenerate cases with mutable table keys
+- Long strings will now dedent on `\r\n` instead of just `\n`.
+- Add `ev/to-file` for synchronous resource operations
+
+## 1.37.1 - 2024-12-05
+- Fix meson cross compilation
+- Update timeout documentation for networking APIs: timeouts raise errors and do not return nil.
+- Add `janet_addtimeout_nil(double sec);` to the C API.
+- Change string hashing.
+- Fix string equality bug.
+- Add `assertf`
+- Change how JANET_PROFILE is loaded to allow more easily customizing the environment.
+- Add `*repl-prompt*` dynamic binding to allow customizing the built in repl.
+- Add multiple path support in the `JANET_PATH` environment variables. This lets
+  user more easily import modules from many directories.
+- Add `nth` and `only-tags` PEG specials to select from sub-captures while
+  dropping the rest.
+
 ## 1.36.0 - 2024-09-07
 - Improve error messages in `bundle/add*` functions.
 - Add CI testing and verify tests pass on the s390x architecture.

@@ -410,6 +410,10 @@
         (ev/call handler connection)
         (break))))
 
+# Make sure we can't bind again with no-reuse
+(assert-error "no-reuse"
+              (net/listen test-host test-port :stream true))
+
 # Read from socket
 
 (defn expect-read
@@ -418,9 +422,15 @@
   (assert (= result text) (string/format "expected %v, got %v" text result)))
 
 # Now do our telnet chat
-(def bob (net/connect test-host test-port))
+(def bob (net/connect test-host test-port :stream))
 (expect-read bob "Whats your name?\n")
-(net/write bob "bob")
+(if (= :mingw (os/which))
+  (net/write bob "bob")
+  (do
+    (def fbob (ev/to-file bob))
+    (file/write fbob "bob")
+    (file/flush fbob)
+    (:close fbob)))
 (expect-read bob "Welcome bob\n")
 (def alice (net/connect test-host test-port))
 (expect-read alice "Whats your name?\n")
@@ -464,5 +474,14 @@
 
 # Close chat server
 (:close chat-server)
+
+# Issue #1531
+(def c (ev/chan 0))
+(ev/spawn (while (def x (ev/take c))))
+(defn print-to-chan [x] (ev/give c x))
+(assert-error "coerce await inside janet_call to error"
+              (with-dyns [*out* print-to-chan]
+                (pp :foo)))
+(ev/chan-close c)
 
 (end-suite)

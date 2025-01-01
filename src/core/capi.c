@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2023 Calvin Rose
+* Copyright (c) 2024 Calvin Rose
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to
@@ -31,9 +31,11 @@
 #ifndef JANET_SINGLE_THREADED
 #ifndef JANET_WINDOWS
 #include <pthread.h>
-#else
-#include <windows.h>
 #endif
+#endif
+
+#ifdef JANET_WINDOWS
+#include <windows.h>
 #endif
 
 #ifdef JANET_USE_STDATOMIC
@@ -60,6 +62,13 @@ JANET_NO_RETURN static void janet_top_level_signal(const char *msg) {
 
 void janet_signalv(JanetSignal sig, Janet message) {
     if (janet_vm.return_reg != NULL) {
+        /* Should match logic in janet_call for coercing everything not ok to an error (no awaits, yields, etc.) */
+        if (janet_vm.coerce_error && sig != JANET_SIGNAL_OK) {
+            if (sig != JANET_SIGNAL_ERROR) {
+                message = janet_wrap_string(janet_formatc("%v coerced from %s to error", message, janet_signal_names[sig]));
+            }
+            sig = JANET_SIGNAL_ERROR;
+        }
         *janet_vm.return_reg = message;
         if (NULL != janet_vm.fiber) {
             janet_vm.fiber->flags |= JANET_FIBER_DID_LONGJUMP;
@@ -546,8 +555,8 @@ void *janet_optabstract(const Janet *argv, int32_t argc, int32_t n, const JanetA
 /* Atomic refcounts */
 
 JanetAtomicInt janet_atomic_inc(JanetAtomicInt volatile *x) {
-#ifdef JANET_WINDOWS
-    return InterlockedIncrement(x);
+#ifdef _MSC_VER
+    return _InterlockedIncrement(x);
 #elif defined(JANET_USE_STDATOMIC)
     return atomic_fetch_add_explicit(x, 1, memory_order_relaxed) + 1;
 #else
@@ -556,8 +565,8 @@ JanetAtomicInt janet_atomic_inc(JanetAtomicInt volatile *x) {
 }
 
 JanetAtomicInt janet_atomic_dec(JanetAtomicInt volatile *x) {
-#ifdef JANET_WINDOWS
-    return InterlockedDecrement(x);
+#ifdef _MSC_VER
+    return _InterlockedDecrement(x);
 #elif defined(JANET_USE_STDATOMIC)
     return atomic_fetch_add_explicit(x, -1, memory_order_acq_rel) - 1;
 #else
@@ -566,8 +575,8 @@ JanetAtomicInt janet_atomic_dec(JanetAtomicInt volatile *x) {
 }
 
 JanetAtomicInt janet_atomic_load(JanetAtomicInt volatile *x) {
-#ifdef JANET_WINDOWS
-    return InterlockedOr(x, 0);
+#ifdef _MSC_VER
+    return _InterlockedOr(x, 0);
 #elif defined(JANET_USE_STDATOMIC)
     return atomic_load_explicit(x, memory_order_acquire);
 #else

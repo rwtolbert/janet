@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2023 Calvin Rose
+* Copyright (c) 2024 Calvin Rose
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to
@@ -1261,6 +1261,7 @@ typedef struct {
     /* new state */
     jmp_buf buf;
     Janet payload;
+    int coerce_error;
 } JanetTryState;
 
 /***** END SECTION TYPES *****/
@@ -1442,6 +1443,7 @@ JANET_NO_RETURN JANET_API void janet_sleep_await(double sec);
 /* For use inside listeners - adds a timeout to the current fiber, such that
  * it will be resumed after sec seconds if no other event schedules the current fiber. */
 JANET_API void janet_addtimeout(double sec);
+JANET_API void janet_addtimeout_nil(double sec);
 JANET_API void janet_ev_inc_refcount(void);
 JANET_API void janet_ev_dec_refcount(void);
 

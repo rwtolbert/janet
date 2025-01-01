@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2023 Calvin Rose
+* Copyright (c) 2024 Calvin Rose
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to
@@ -31,6 +31,7 @@
 
 #ifndef JANET_WINDOWS
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -164,6 +165,14 @@ JANET_CORE_FN(cfun_io_fopen,
     }
     FILE *f = fopen((const char *)fname, (const char *)fmode);
     if (f != NULL) {
+#ifndef JANET_WINDOWS
+        struct stat st;
+        fstat(fileno(f), &st);
+        if (S_ISDIR(st.st_mode)) {
+            fclose(f);
+            janet_panicf("cannot open directory: %s", fname);
+        }
+#endif
         size_t bufsize = janet_optsize(argv, argc, 2, BUFSIZ);
         if (bufsize != BUFSIZ) {
             int result = setvbuf(f, NULL, bufsize ? _IOFBF : _IONBF, bufsize);
